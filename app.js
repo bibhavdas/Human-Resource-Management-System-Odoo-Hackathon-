@@ -3,10 +3,8 @@ import { db } from "./firebase.js";
 
 /* ============================================================
    Alignt HRMS — dashboard logic
-   Backend-Ready: Mock arrays replaced with active Real-time listeners
    ============================================================ */
 
-/* ---- Require a session — no dashboard without signing in first ---- */
 const session = getSession();
 if (!session){
   window.location.href = "index.html";
@@ -14,8 +12,9 @@ if (!session){
 }
 
 const CURRENT_USER = {
-  name: session.name,
-  empId: session.empId,
+  name: session.name && session.name !== "Employee" ? session.name : deriveNameFromEmail(session.email),
+  empId: session.empId && session.empId !== "AU-00000" ? session.empId : "AU-Pending",
+  role: session.role || "employee",
   title: session.role === "admin" ? "HR Administrator" : "Employee",
   email: session.email,
   phone: "",
@@ -23,8 +22,11 @@ const CURRENT_USER = {
   department: "—",
   manager: "—",
   joined: "—",
-  initials: initialsOf(session.name),
-  avatarData: null
+  createdAt: session.createdAt || Date.now(),
+  status: "absent",
+  initials: initialsOf(session.name && session.name !== "Employee" ? session.name : deriveNameFromEmail(session.email)),
+  avatarData: null,
+  coverData: null
 };
 
 /* ---------------------------------------------------------
@@ -36,7 +38,10 @@ let leaves = [];
 const ADMIN_NET = {};
 
 let punched = false;
-let hoursToday = 0;
+let isFirstLoad = true;
+let isFirstLeaveLoad = true;
+
+const notiSound = new Audio("noti.mp3");
 
 /* ---------------------------------------------------------
    Small helpers
@@ -44,6 +49,8 @@ let hoursToday = 0;
 const rupee = n => "₹" + Math.abs(n).toLocaleString("en-IN");
 
 function notifyEvent(type, title, message){
+  notiSound.play().catch(e => console.warn("Audio play prevented (User must interact with page first)", e));
+  
   if (typeof Notify !== "undefined"){
     Notify.notify({ type, title, message });
   } else {
@@ -59,6 +66,43 @@ function getAvatarColor(name) {
   }
   return colors[Math.abs(hash) % colors.length];
 }
+
+function timeAgo(ts) {
+    const diff = Math.max(0, Date.now() - ts);
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// Universal Image Compressor
+const compressImage = (file, maxDim = 256) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+            const canvas = document.createElement("canvas");
+            let { width, height } = img;
+            
+            if (width > height) {
+                if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+            } else {
+                if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.7)); 
+        };
+        img.onerror = reject;
+    };
+    reader.onerror = reject;
+});
 
 /* ---------------------------------------------------------
    App shell / routing
@@ -89,25 +133,21 @@ function initApp(role){
   if (punchBtn) punchBtn.addEventListener("click", handlePunch);
 
   $$(".nav-item[data-view]").forEach(btn => {
-    btn.addEventListener("click", () => switchView(btn.dataset.view));
+    btn.addEventListener("click", () => {
+        if (btn.dataset.view === "profile") {
+            renderProfileView(CURRENT_USER);
+        }
+        switchView(btn.dataset.view);
+    });
   });
+  
   $("#logout-btn").addEventListener("click", logout);
   $("#hamburger").addEventListener("click", () => $(".sidebar").classList.toggle("is-open"));
 
-  // Fire up the real-time Firebase listeners which populate everything
   setupRealtimeListeners(role);
-
   renderQuickCards(role);
-  renderActivity();
-
-  // These render functions might be called while arrays are empty, 
-  // but they will re-render automatically when the listeners receive data.
-  if (role === "admin") renderAdminSummary();
-  initProfile();
-  initAttendance(role);
-  initLeave(role);
-  initPayroll(role);
-  if (role === "admin") initEmployees();
+  initProfileEdit(); 
+  initLeave(); 
 
   switchView("dashboard");
 }
@@ -131,6 +171,13 @@ function switchView(view){
       sec.classList.remove("is-active");
     }
   });
+
+  if (view === "approvals" && CURRENT_USER.role === "admin") renderAdminLeaves();
+  if (view === "leave") renderEmployeeLeaves();
+  if (view === "employees" && CURRENT_USER.role === "admin") initEmployees();
+  if (view === "attendance") initAttendance(CURRENT_USER.role);
+  if (view === "payroll") initPayroll(CURRENT_USER.role);
+  if (view === "dashboard" && CURRENT_USER.role === "admin") renderAdminSummary();
 }
 
 function logout(){
@@ -142,55 +189,118 @@ function logout(){
    Real-Time Data Handlers (Firestore)
    --------------------------------------------------------- */
 function setupRealtimeListeners(role) {
-  // 1. Core Profile & Employee Tracking
+  // 1. Employee Profiles & Ghost Account Cleaner
   onSnapshot(collection(db, "users"), (snapshot) => {
-      EMPLOYEES = snapshot.docs.map(docSnap => {
-          const data = docSnap.data();
+      let docsData = snapshot.docs.map(docSnap => ({ id: docSnap.id, email: docSnap.id, ...docSnap.data() }));
+      
+      docsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
-          // Sync current logged-in user profile real-time
-          if (docSnap.id === CURRENT_USER.email) {
-              CURRENT_USER.name = data.name || CURRENT_USER.name;
-              CURRENT_USER.phone = data.phone || "";
-              CURRENT_USER.address = data.address || "";
-              CURRENT_USER.joined = data.joined || "—";
-              CURRENT_USER.department = data.department || "—";
-              CURRENT_USER.avatarData = data.avatarData || null;
-              CURRENT_USER.empId = data.empId || CURRENT_USER.empId;
+      EMPLOYEES = docsData.map((data, index) => {
+          const correctEmpId = "AU-" + String(index + 1).padStart(5, '0');
+          let needsPatch = false;
+          const patch = {};
 
-              $("#topbar-username").textContent = CURRENT_USER.name;
-              // Only redraw the profile if they aren't actively editing
-              if ($("#profile-edit-grid") && $("#profile-edit-grid").hidden) {
-                  initProfile(); 
-              }
+          // DESTROY AU-00000 and generic "Employee" names!
+          if (data.empId !== correctEmpId || data.empId === "AU-00000") {
+              patch.empId = correctEmpId;
+              needsPatch = true;
+          }
+          if (!data.name || data.name === "Employee") {
+              patch.name = deriveNameFromEmail(data.email);
+              needsPatch = true;
+          }
+          if (!data.joined) {
+              patch.joined = new Date(data.createdAt || Date.now()).toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' });
+              needsPatch = true;
+          }
+          if (!data.createdAt) {
+              patch.createdAt = Date.now();
+              needsPatch = true;
+          }
+          if (!data.role) {
+              patch.role = "employee";
+              needsPatch = true;
+          }
+          
+          if (needsPatch) {
+              updateDoc(doc(db, "users", data.id), patch).catch(e => console.warn(e));
+              Object.assign(data, patch); 
           }
 
-          return {
-              id: docSnap.id,
-              email: docSnap.id,
-              ...data,
-              status: data.status || "absent"
-          };
+          if (data.id === CURRENT_USER.email) {
+              const prevStatus = CURRENT_USER.status;
+              
+              CURRENT_USER.name = data.name;
+              CURRENT_USER.phone = data.phone || "";
+              CURRENT_USER.address = data.address || "";
+              CURRENT_USER.joined = data.joined;
+              CURRENT_USER.createdAt = data.createdAt;
+              CURRENT_USER.department = data.department || "—";
+              CURRENT_USER.avatarData = data.avatarData || null;
+              CURRENT_USER.coverData = data.coverData || null;
+              CURRENT_USER.empId = data.empId;
+              CURRENT_USER.status = data.status || "absent";
+              CURRENT_USER.role = data.role; 
+
+              $("#topbar-username").textContent = CURRENT_USER.name;
+              updateTopbarAvatar(); 
+
+              punched = (CURRENT_USER.status === "present");
+              const punchBtn = $("#dash-punch-btn");
+              if (punchBtn) {
+                  punchBtn.textContent = punched ? "Punch out" : "Punch in";
+                  $("#stat-status").textContent = punched ? "In" : "Out";
+              }
+              
+              if (isFirstLoad) {
+                  if (punched && dashBadge && typeof dashBadge.flip === 'function') dashBadge.flip(); 
+                  isFirstLoad = false;
+              }
+
+              if ($("#profile-edit-grid") && $("#profile-edit-grid").hidden && $("#profile-name-main").textContent === CURRENT_USER.name) {
+                  renderProfileView(CURRENT_USER);
+              }
+
+              if (prevStatus !== CURRENT_USER.status && currentView === "attendance") renderCalendar();
+          }
+          return { ...data, status: data.status || "absent" };
       });
 
-      // Sort alphabetically for admins
       EMPLOYEES.sort((a,b) => (a.name || "").localeCompare(b.name || ""));
 
       if (role === "admin") {
-          renderAdminSummary();
+          if (currentView === "dashboard") renderAdminSummary();
           if (currentView === "employees") initEmployees();
           if (currentView === "attendance") initAttendance(role);
       }
   });
 
-  // 2. Global Leave System
+  // 2. Global Leave System with SMART Notifications
   onSnapshot(collection(db, "leaves"), (snapshot) => {
+      
+      snapshot.docChanges().forEach(change => {
+          if (!isFirstLeaveLoad) {
+              const data = change.doc.data();
+              
+              if (role === "admin" && change.type === "added" && data.status === "pending") {
+                  notifyEvent("info", "New Leave Request", `${data.who} applied for ${data.type}`);
+              }
+              
+              if (role !== "admin" && change.type === "modified" && data.email === CURRENT_USER.email) {
+                  if (data.status === "approved") notifyEvent("success", "Leave Approved", `Your ${data.type} request was approved!`);
+                  if (data.status === "rejected") notifyEvent("danger", "Leave Rejected", `Your ${data.type} request was denied.`);
+              }
+          }
+      });
+      isFirstLeaveLoad = false;
+
       leaves = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }))
           .sort((a, b) => b.createdAt - a.createdAt);
 
       if (currentView === "leave") renderEmployeeLeaves();
       if (role === "admin") {
           if (currentView === "approvals" || currentView === "leave") renderAdminLeaves();
-          renderAdminSummary();
+          if (currentView === "dashboard") renderAdminSummary();
       }
   });
 
@@ -207,15 +317,49 @@ function setupRealtimeListeners(role) {
           }
       });
       
-      // Update UI only if not currently actively modifying inputs
       if (currentView === "payroll") {
-          if (role === "admin" && !document.activeElement.closest("#admin-payroll-table")) {
-              renderAdminPayroll();
-          }
-          if (!document.activeElement.closest("#admin-payroll-table")) {
-              initPayroll(role);
-          }
+          if (role === "admin" && !document.activeElement.closest("#admin-payroll-table")) renderAdminPayroll();
+          if (!document.activeElement.closest("#admin-payroll-table")) initPayroll(role);
       }
+  });
+
+  // 4. Live Activity Logs
+  onSnapshot(collection(db, "activity_logs"), (snapshot) => {
+      const allLogs = snapshot.docs.map(docSnap => docSnap.data()).sort((a, b) => b.ts - a.ts);
+      const visibleLogs = role === "admin" ? allLogs : allLogs.filter(l => l.email === CURRENT_USER.email);
+      renderActivity(visibleLogs, role);
+  });
+}
+
+/* ---------------------------------------------------------
+   Activity Feed Actions
+   --------------------------------------------------------- */
+async function logActivity(action) {
+    try {
+        await addDoc(collection(db, "activity_logs"), {
+            action,
+            name: CURRENT_USER.name,
+            email: CURRENT_USER.email,
+            ts: Date.now()
+        });
+    } catch(err) {
+        console.error("Activity log error:", err);
+    }
+}
+
+function renderActivity(logs, role) {
+  const list = $("#activity-list");
+  list.innerHTML = "";
+  if (!logs || logs.length === 0) {
+    list.innerHTML = `<li><span class="muted">No recent activity.</span></li>`;
+    return;
+  }
+  
+  logs.slice(0, 10).forEach(log => {
+    const text = role === "admin" ? `<b>${log.name}</b> ${log.action.toLowerCase()}` : log.action;
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="a-dot"></span><span style="flex:1">${text}</span><time>${timeAgo(log.ts)}</time>`;
+    list.appendChild(li);
   });
 }
 
@@ -223,41 +367,26 @@ function setupRealtimeListeners(role) {
    Punch in/out (dashboard)
    --------------------------------------------------------- */
 async function handlePunch(){
-  dashBadge.flip();
-  punched = !punched;
-  $("#dash-punch-btn").textContent = punched ? "Punch out" : "Punch in";
-  $("#stat-status").textContent = punched ? "In" : "Out";
-
-  // Sync punch status instantly to DB
+  const newStatus = punched ? "absent" : "present";
+  
   try {
-      await setDoc(doc(db, "users", CURRENT_USER.email), {
-          status: punched ? "present" : "absent"
-      }, { merge: true });
+      await setDoc(doc(db, "users", CURRENT_USER.email), { status: newStatus }, { merge: true });
+      await logActivity(newStatus === "present" ? "Punched in" : "Punched out for the day");
+      
+      dashBadge.flip();
+
+      if (newStatus === "present"){
+        notifyEvent("success", "Punched in", "Timer started for today.");
+      } else {
+        notifyEvent("info", "Punched out", `Logged out for today.`);
+      }
   } catch (err) {
       console.error("Failed to sync attendance status", err);
-  }
-
-  if (punched){
-    notifyEvent("success", "Punched in", "Timer started for today.");
-    prependActivity("Punched in");
-  } else {
-    hoursToday += 0.25 + Math.random() * 0.5;
-    const counter = { v: parseFloat($("#stat-hours").textContent) };
-    anime({
-      targets: counter,
-      v: hoursToday,
-      duration: 700,
-      easing: "easeOutQuad",
-      round: 100,
-      update: () => { $("#stat-hours").textContent = counter.v.toFixed(1); }
-    });
-    notifyEvent("info", "Punched out", `Logged ${hoursToday.toFixed(1)} hours for today.`);
-    prependActivity("Punched out for the day");
   }
 }
 
 /* ---------------------------------------------------------
-   Dashboard: quick cards + activity + admin summary
+   Dashboard: quick cards + admin summary
    --------------------------------------------------------- */
 function renderQuickCards(role){
   const cards = [
@@ -283,124 +412,138 @@ function calendarIcon(){ return `<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" 
 function checkIcon(){ return `<svg viewBox="0 0 24 24"><path d="M4 12.5l4.5 4.5L20 6"/></svg>`; }
 function coinIcon(){ return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9M9 9.5h4.2a1.8 1.8 0 0 1 0 3.6H10a1.8 1.8 0 0 0 0 3.6H15"/></svg>`; }
 
-function renderActivity(){
-  const items = [
-    { text: "You signed in", time: "just now" }
-  ];
-  const list = $("#activity-list");
-  list.innerHTML = "";
-  items.forEach(i => list.appendChild(activityRow(i.text, i.time)));
-}
-function activityRow(text, time){
-  const li = document.createElement("li");
-  li.innerHTML = `<span class="a-dot"></span><span>${text}</span><time>${time}</time>`;
-  return li;
-}
-function prependActivity(text){
-  const list = $("#activity-list");
-  const li = activityRow(text, "just now");
-  li.style.opacity = 0;
-  list.prepend(li);
-  anime({ targets: li, opacity: [0, 1], translateX: [-8, 0], duration: 320, easing: "easeOutQuad" });
-}
-
 function renderAdminSummary(){
   const pendingCount = leaves.filter(l => l.status === "pending").length;
-  const presentCount = EMPLOYEES.filter(e => e.status === "present").length;
+  
+  const employeeList = EMPLOYEES.filter(e => e.role !== "admin");
+  const presentCount = employeeList.filter(e => e.status === "present").length;
+  
   $("#admin-summary").innerHTML = `
-    <div class="panel"><span class="muted">Team size</span><span class="big">${EMPLOYEES.length}</span></div>
-    <div class="panel"><span class="muted">Present today</span><span class="big">${presentCount}/${EMPLOYEES.length}</span></div>
+    <div class="panel"><span class="muted">Team size (Employees)</span><span class="big">${employeeList.length}</span></div>
+    <div class="panel"><span class="muted">Online / Present</span><span class="big">${presentCount}/${employeeList.length}</span></div>
     <div class="panel"><span class="muted">Pending approvals</span><span class="big">${pendingCount}</span></div>
   `;
 }
 
 /* ---------------------------------------------------------
-   Profile (LinkedIn Style Overhaul)
+   Profile & Strict Avatar/Cover Constraints
    --------------------------------------------------------- */
-function initProfile(){
-  // 1. Set the main header text
-  $("#profile-name-main").textContent = CURRENT_USER.name;
-  $("#profile-role-line").textContent = `${CURRENT_USER.title} · ${CURRENT_USER.department}`;
-  $("#profile-location-text").textContent = CURRENT_USER.address || "Barasat, Kolkata";
-  
-  // 2. Handle the Avatar (Image Upload vs Colored Initials)
-  const avatarColor = getAvatarColor(CURRENT_USER.name);
-  const initials = initialsOf(CURRENT_USER.name);
-  
-  const topbarAvatar = $("#topbar-avatar");
-  const giantAvatar = $("#profile-avatar");
+function updateTopbarAvatar() {
+    const topbarAvatar = $("#topbar-avatar");
+    if (!topbarAvatar) return;
 
-  if (CURRENT_USER.avatarData) {
-      const imgHTML = `<img src="${CURRENT_USER.avatarData}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-      topbarAvatar.innerHTML = imgHTML;
-      giantAvatar.innerHTML = imgHTML;
-      topbarAvatar.style.backgroundColor = 'transparent';
-      giantAvatar.style.backgroundColor = 'transparent';
-  } else {
-      topbarAvatar.innerHTML = "";
-      giantAvatar.innerHTML = "";
-      topbarAvatar.textContent = initials;
-      giantAvatar.textContent = initials;
-      topbarAvatar.style.backgroundColor = avatarColor;
-      giantAvatar.style.backgroundColor = avatarColor;
+    topbarAvatar.style.overflow = 'hidden'; 
+
+    if (CURRENT_USER.avatarData) {
+        topbarAvatar.innerHTML = `<img src="${CURRENT_USER.avatarData}" style="width:34px; height:34px; max-width:34px; max-height:34px; min-width:34px; min-height:34px; object-fit:cover; display:block; border-radius:50%; margin:0; padding:0;">`;
+        topbarAvatar.style.backgroundColor = 'transparent';
+    } else {
+        topbarAvatar.innerHTML = "";
+        topbarAvatar.textContent = initialsOf(CURRENT_USER.name);
+        topbarAvatar.style.backgroundColor = getAvatarColor(CURRENT_USER.name);
+    }
+}
+
+function renderProfileView(userObj) {
+  const isSelf = userObj.email === CURRENT_USER.email;
+
+  $("#profile-name-main").textContent = userObj.name;
+  const displayTitle = userObj.title || (userObj.role === 'admin' ? 'HR Administrator' : 'Employee');
+  $("#profile-role-line").textContent = `${displayTitle} · ${userObj.department || '—'}`;
+  $("#profile-location-text").textContent = userObj.address || "Not added yet";
+
+  const giantAvatar = $("#profile-avatar");
+  if (giantAvatar) {
+      giantAvatar.style.overflow = "hidden";
+      if (userObj.avatarData) {
+          giantAvatar.innerHTML = `<img src="${userObj.avatarData}" style="width:112px; height:112px; max-width:112px; max-height:112px; min-width:112px; min-height:112px; object-fit:cover; display:block; border-radius:50%; border:none; margin:0; padding:0;">`;
+          giantAvatar.style.backgroundColor = 'transparent';
+          giantAvatar.style.border = 'none';
+      } else {
+          giantAvatar.innerHTML = "";
+          giantAvatar.textContent = initialsOf(userObj.name);
+          giantAvatar.style.backgroundColor = getAvatarColor(userObj.name);
+          giantAvatar.style.border = "4px solid var(--card)";
+      }
+      
+      const wrapper = $(".profile-avatar-wrapper");
+      if (wrapper && userObj.avatarData) {
+          wrapper.style.padding = "0";
+          wrapper.style.background = "transparent";
+      } else if (wrapper) {
+          wrapper.style.padding = "4px";
+          wrapper.style.background = "var(--card)";
+      }
   }
 
-  // 3. Populate the Details Grid
+  const coverEl = $(".profile-cover");
+  if (coverEl) {
+      if (userObj.coverData) {
+          coverEl.style.background = `url(${userObj.coverData}) center/cover`;
+      } else {
+          coverEl.style.background = `linear-gradient(120deg, var(--brand-dark), var(--brand))`;
+      }
+  }
+
   const fields = [
-    ["Full name", CURRENT_USER.name],
-    ["Employee ID", CURRENT_USER.empId],
-    ["Work email", CURRENT_USER.email],
-    ["Phone", CURRENT_USER.phone || "Not added yet"],
-    ["Address", CURRENT_USER.address || "Not added yet"],
-    ["Joined on", CURRENT_USER.joined]
+    ["Full name", userObj.name],
+    ["Employee ID", userObj.empId],
+    ["Work email", userObj.email],
+    ["Phone", userObj.phone || "Not added yet"],
+    ["Address", userObj.address || "Not added yet"],
+    ["Joined on", userObj.joined || "—"]
   ];
   const grid = $("#profile-view-grid");
   grid.innerHTML = fields.map(([label, val]) => `
     <div class="p-field"><b>${label}</b><span>${val}</span></div>
   `).join("");
 
-  // 4. Edit Button Logic
-  $("#edit-profile-btn").addEventListener("click", () => {
+  const editBtn = $("#edit-profile-btn");
+  if (editBtn) {
+      editBtn.style.display = isSelf ? "block" : "none";
+  }
+}
+
+function initProfileEdit(){
+  const editBtn = $("#edit-profile-btn");
+  const cancelBtn = $("#cancel-edit-btn");
+  const form = $("#profile-edit-grid");
+  const grid = $("#profile-view-grid");
+
+  if (!form || form.dataset.bound) return;
+
+  editBtn.addEventListener("click", () => {
     grid.hidden = true;
-    const editGrid = $("#profile-edit-grid");
-    
     $("#edit-name").value = CURRENT_USER.name;
     $("#edit-phone").value = CURRENT_USER.phone;
     $("#edit-address").value = CURRENT_USER.address;
     $("#edit-avatar-file").value = ""; 
     
-    editGrid.hidden = false;
-    editGrid.setAttribute("data-active", "");
-    anime({ targets: editGrid, opacity: [0, 1], duration: 280, easing: "easeOutQuad" });
+    const coverInput = $("#edit-cover-file");
+    if (coverInput) coverInput.value = ""; 
+    
+    form.hidden = false;
+    form.setAttribute("data-active", "");
+    anime({ targets: form, opacity: [0, 1], duration: 280, easing: "easeOutQuad" });
   });
   
-  $("#cancel-edit-btn").addEventListener("click", () => {
-    $("#profile-edit-grid").hidden = true;
-    $("#profile-edit-grid").removeAttribute("data-active");
+  cancelBtn.addEventListener("click", () => {
+    form.hidden = true;
+    form.removeAttribute("data-active");
     grid.hidden = false;
   });
   
-  // 5. Submit Changes to Firestore
-  const form = $("#profile-edit-grid");
-  const newForm = form.cloneNode(true);
-  form.parentNode.replaceChild(newForm, form);
-  
-  $("#profile-edit-grid").addEventListener("submit", async e => {
+  form.addEventListener("submit", async e => {
     e.preventDefault();
     
     const newName = $("#edit-name").value;
     const newPhone = $("#edit-phone").value;
     const newAddress = $("#edit-address").value;
     const fileInput = $("#edit-avatar-file");
-    const saveBtn = e.target.querySelector('button[type="submit"]');
+    const coverInput = $("#edit-cover-file");
     
+    const saveBtn = e.target.querySelector('button[type="submit"]');
     const userDocRef = doc(db, "users", CURRENT_USER.email);
-    const getBase64 = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = error => reject(error);
-    });
 
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
@@ -413,29 +556,33 @@ function initProfile(){
       };
 
       if (fileInput.files && fileInput.files.length > 0) {
-          updatedData.avatarData = await getBase64(fileInput.files[0]);
+          updatedData.avatarData = await compressImage(fileInput.files[0], 256);
+      }
+      if (coverInput && coverInput.files && coverInput.files.length > 0) {
+          updatedData.coverData = await compressImage(coverInput.files[0], 1024);
       }
 
       await setDoc(userDocRef, updatedData, { merge: true });
 
-      // Clean local session just in case of reload
       const session = getSession();
       session.name = newName;
       setSession(session);
       
-      $("#profile-edit-grid").hidden = true;
-      $("#profile-edit-grid").removeAttribute("data-active");
+      form.hidden = true;
+      form.removeAttribute("data-active");
       grid.hidden = false;
 
       notifyEvent("success", "Profile updated", "Your profile changes were permanently saved.");
     } catch (error) {
       console.error("Firebase update failed: ", error);
-      notifyEvent("danger", "Update failed", "Could not save your details.");
+      notifyEvent("danger", "Update failed", "Could not save your details. Ensure image isn't too large.");
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = "Save changes";
     }
   });
+
+  form.dataset.bound = "true";
 }
 
 /* ---------------------------------------------------------
@@ -456,10 +603,12 @@ function initAttendance(role){
 
   if (role === "admin"){
     const table = $("#admin-attendance-table");
+    const employeeList = EMPLOYEES.filter(e => e.role !== "admin");
+    
     table.innerHTML = `
       <tr><th>Employee</th><th>ID</th><th>Department</th><th>Status</th></tr>
-      ${EMPLOYEES.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
-      EMPLOYEES.map(e => `
+      ${employeeList.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
+      employeeList.map(e => `
         <tr>
           <td>${e.name}</td><td>${e.empId}</td><td>${e.department || '—'}</td>
           <td><span class="status-pill ${e.status}">${label(e.status)}</span></td>
@@ -472,14 +621,6 @@ function initAttendance(role){
 
 function label(status){
   return { present: "Present", half: "Half-day", absent: "Absent", leave: "Leave", weekend: "Weekend" }[status] || status;
-}
-
-function seededStatus(day){
-  const r = (day * 37) % 11;
-  if (r === 0) return "absent";
-  if (r === 1 || r === 2) return "half";
-  if (r === 3) return "leave";
-  return "present";
 }
 
 function renderCalendar(range = "month"){
@@ -516,9 +657,29 @@ function renderCalendar(range = "month"){
 
   daysToShow.forEach(d => {
     const cell = document.createElement("div");
-    const isFuture = d > now;
+    const cellTime = d.getTime();
+    
+    const joinDate = new Date(CURRENT_USER.createdAt);
+    const joinStart = new Date(joinDate.getFullYear(), joinDate.getMonth(), joinDate.getDate()).getTime();
+    
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const isFuture = cellTime > todayStart;
     const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-    const status = isWeekend ? "weekend" : (isFuture ? "" : seededStatus(d.getDate()));
+    
+    let status = "";
+    
+    if (cellTime < joinStart) {
+        status = ""; 
+    } else if (isFuture) {
+        status = ""; 
+    } else if (isWeekend) {
+        status = "weekend"; 
+    } else if (cellTime === todayStart) {
+        status = CURRENT_USER.status === "present" ? "present" : "absent";
+    } else {
+        status = "present"; 
+    }
+
     cell.className = "cal-cell" + (status ? ` ${status}` : "");
     cell.textContent = d.getDate();
     grid.appendChild(cell);
@@ -526,6 +687,7 @@ function renderCalendar(range = "month"){
 
   anime({ targets: "#cal-grid .cal-cell", opacity: [0, 1], scale: [0.8, 1], delay: anime.stagger(10), duration: 320, easing: "easeOutQuad" });
 }
+
 function emptyCell(){
   const el = document.createElement("div");
   el.className = "cal-cell empty";
@@ -533,17 +695,19 @@ function emptyCell(){
 }
 
 /* ---------------------------------------------------------
-   Leave
+   Leave Submissions
    --------------------------------------------------------- */
-function initLeave(role){
-  renderEmployeeLeaves();
-  if (role === "admin") renderAdminLeaves();
-
-  // Attach submit handler once 
-  const submitFn = async e => {
-    e.preventDefault();
-    const from = $("#leave-from").value, to = $("#leave-to").value;
+function initLeave(){
+  const leaveForm = $("#leave-form");
+  if (!leaveForm || leaveForm.dataset.bound) return;
+  
+  leaveForm.addEventListener("submit", async e => {
+    e.preventDefault(); 
+    
+    const from = $("#leave-from").value;
+    const to = $("#leave-to").value;
     const leaveType = $("#leave-type").value;
+    
     if (!from || !to){ toast("Pick a start and end date."); return; }
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -561,6 +725,8 @@ function initLeave(role){
           createdAt: Date.now()
         });
         
+        await logActivity(`Applied for ${leaveType.toLowerCase()}`);
+        
         e.target.reset();
         notifyEvent("info", "Leave request submitted", `${leaveType} · awaiting approval.`);
     } catch (err) {
@@ -570,12 +736,9 @@ function initLeave(role){
         submitBtn.disabled = false;
         submitBtn.textContent = "Submit request";
     }
-  };
-
-  const leaveForm = $("#leave-form");
-  const freshForm = leaveForm.cloneNode(true);
-  leaveForm.parentNode.replaceChild(freshForm, leaveForm);
-  freshForm.addEventListener("submit", submitFn);
+  });
+  
+  leaveForm.dataset.bound = "true";
 }
 
 function fmtRange(from, to){
@@ -607,7 +770,9 @@ function renderEmployeeLeaves(){
 
 function renderAdminLeaves(){
   const list = $("#leave-list-admin");
+  if (!list) return;
   list.innerHTML = "";
+  
   const pending = leaves.filter(l => l.status === "pending");
   if (!pending.length){
     list.innerHTML = `<li class="leave-card"><span class="muted">No pending requests. All caught up.</span></li>`;
@@ -650,6 +815,7 @@ function resolveLeave(btn){
       try {
           const rec = leaves.find(l => l.id === id);
           await updateDoc(doc(db, "leaves", id), { status: action });
+          await logActivity(`${action === "approved" ? "Approved" : "Rejected"} leave for ${rec ? rec.who : 'employee'}`);
           notifyEvent(
              action === "approved" ? "success" : "danger",
              `Leave ${action}`,
@@ -658,7 +824,7 @@ function resolveLeave(btn){
       } catch (err) {
           console.error("Resolve error:", err);
           notifyEvent("danger", "Failed to resolve", "Could not complete the leave action.");
-          anime({ targets: li, opacity: 1, translateX: 0, duration: 200 }); // Revert on fail
+          anime({ targets: li, opacity: 1, translateX: 0, duration: 200 });
       }
     }
   });
@@ -693,10 +859,13 @@ function initPayroll(role){
 
 function renderAdminPayroll(){
   const table = $("#admin-payroll-table");
+  
+  const empList = EMPLOYEES.filter(e => e.role !== "admin");
+  
   table.innerHTML = `
     <tr><th>Employee</th><th>ID</th><th>Net pay</th><th></th></tr>
-    ${EMPLOYEES.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
-    EMPLOYEES.map(e => `
+    ${empList.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
+    empList.map(e => `
       <tr data-id="${e.email}">
         <td>${e.name}</td><td>${e.empId}</td>
         <td><input class="editable-input" type="number" value="${ADMIN_NET[e.email] ?? 0}"></td>
@@ -733,19 +902,49 @@ function renderAdminPayroll(){
 }
 
 /* ---------------------------------------------------------
-   Employees (admin)
+   Employees (admin) - HR Directory w/ Profiles
    --------------------------------------------------------- */
 function initEmployees(){
   const table = $("#employees-table");
+  if (!table) return;
+  
+  const empList = EMPLOYEES.filter(e => e.role !== "admin");
+  
   table.innerHTML = `
     <tr><th>Employee</th><th>ID</th><th>Department</th><th>Today</th></tr>
-    ${EMPLOYEES.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
-    EMPLOYEES.map(e => `
-      <tr>
-        <td>${e.name}</td><td>${e.empId}</td><td>${e.department || '—'}</td>
+    ${empList.length === 0 ? `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--muted)">No employee data available.</td></tr>` : 
+    empList.map(e => {
+      
+      const avatarHTML = e.avatarData 
+        ? `<img src="${e.avatarData}" style="width:28px;height:28px;max-width:28px;max-height:28px;min-width:28px;min-height:28px;border-radius:50%;object-fit:cover;display:block;">`
+        : `<div style="width:28px;height:28px;border-radius:50%;background:${getAvatarColor(e.name)};color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;">${initialsOf(e.name)}</div>`;
+
+      return `
+      <tr class="emp-row" data-email="${e.email}" style="cursor:pointer; transition: background 0.15s;">
+        <td style="display:flex;align-items:center;gap:10px;">
+           ${avatarHTML}
+           <span style="font-weight: 500;">${e.name}</span>
+        </td>
+        <td>${e.empId}</td>
+        <td>${e.department || '—'}</td>
         <td><span class="status-pill ${e.status}">${label(e.status)}</span></td>
-      </tr>`).join("")}
+      </tr>`;
+    }).join("")}
   `;
+
+  $$(".emp-row").forEach(row => {
+      row.addEventListener("mouseover", () => row.style.backgroundColor = "var(--paper-2)");
+      row.addEventListener("mouseout", () => row.style.backgroundColor = "transparent");
+      
+      row.addEventListener("click", () => {
+          const email = row.dataset.email;
+          const targetEmployee = EMPLOYEES.find(e => e.email === email);
+          if (targetEmployee) {
+              renderProfileView(targetEmployee);
+              switchView("profile");
+          }
+      });
+  });
 }
 
 /* ---------------------------------------------------------
