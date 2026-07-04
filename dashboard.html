@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alignt — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app-shell" class="app-shell">
+
+  <aside class="sidebar">
+    <div class="brand-mark small">
+      <span class="brand-dot"></span> Alignt
+    </div>
+    <nav class="side-nav">
+      <button class="nav-item is-active" data-view="dashboard">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-view="profile">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c1.4-4 4-6 7.5-6s6.1 2 7.5 6"/></svg>
+        <span>Profile</span>
+      </button>
+      <button class="nav-item" data-view="attendance">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17"/><path d="M8 3v3M16 3v3"/><path d="M12 13v3.5l2.5 1.5"/></svg>
+        <span>Attendance</span>
+      </button>
+      <button class="nav-item" data-view="leave">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17"/><path d="M8 3v3M16 3v3"/><path d="M8.5 14l2.3 2.3L15.5 12"/></svg>
+        <span>Leave</span>
+      </button>
+      <button class="nav-item" data-view="payroll">
+        <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 6.5V6a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v.5"/></svg>
+        <span>Payroll</span>
+      </button>
+      <button class="nav-item admin-only" data-view="employees">
+        <svg viewBox="0 0 24 24"><circle cx="8.5" cy="8" r="3"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M2.8 19c1-3.3 3-5 5.7-5s4.7 1.7 5.7 5"/><path d="M14.3 15.3c2.1.3 3.6 1.7 4.4 4.2"/></svg>
+        <span>Employees</span>
+      </button>
+      <button class="nav-item admin-only" data-view="approvals">
+        <svg viewBox="0 0 24 24"><path d="M4 12.5l4.5 4.5L20 6"/></svg>
+        <span>Approvals</span>
+      </button>
+    </nav>
+    <button class="nav-item logout" id="logout-btn">
+      <svg viewBox="0 0 24 24"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3"/><path d="M14 8l4 4-4 4"/><path d="M18 12H9"/></svg>
+      <span>Log out</span>
+    </button>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+      <h2 class="view-title" id="view-title">Dashboard</h2>
+      <div class="topbar-user">
+        <div id="notif-bell-slot"></div>
+        <span class="user-name" id="topbar-username">—</span>
+        <span class="user-role" id="topbar-role">—</span>
+        <div class="user-avatar" id="topbar-avatar">—</div>
+      </div>
+    </header>
+
+    <main class="content" id="content">
+
+      <!-- DASHBOARD -->
+      <section class="view is-active" data-view="dashboard">
+
+        <div class="hero-punch-card">
+          <div class="hero-punch-copy">
+            <p class="eyebrow">Today · <span id="today-date"></span></p>
+            <h3>Ready when you are.</h3>
+            <p class="muted">One tap logs the moment — no forms, no chasing anyone down later.</p>
+            <div class="hero-stats">
+              <div><span class="stat-num" id="stat-hours">0.0</span><span class="stat-label">hours today</span></div>
+              <div><span class="stat-num" id="stat-status">Out</span><span class="stat-label">status</span></div>
+            </div>
+          </div>
+          <div class="hero-punch-visual">
+            <canvas id="dash-badge-canvas"></canvas>
+            <button id="dash-punch-btn" class="punch-btn dark" type="button">Punch in</button>
+          </div>
+        </div>
+
+        <div class="quick-cards" id="quick-cards"></div>
+
+        <div class="panel">
+          <div class="panel-head"><h4>Recent activity</h4></div>
+          <ul class="activity-list" id="activity-list"></ul>
+        </div>
+
+        <div class="admin-summary admin-only" id="admin-summary"></div>
+      </section>
+
+      <!-- PROFILE -->
+      <section class="view" data-view="profile">
+        
+        <!-- LinkedIn Style Header Card -->
+        <div class="panel profile-header-card" style="padding: 0; overflow: hidden;">
+          <div class="profile-cover"></div>
+          <div class="profile-header-main">
+            <div class="profile-avatar-wrapper">
+              <div class="user-avatar giant" id="profile-avatar">—</div>
+            </div>
+            <div class="profile-actions">
+              <button class="btn-secondary" id="edit-profile-btn">Edit Profile</button>
+            </div>
+          </div>
+          <div class="profile-basic-info">
+            <h2 id="profile-name-main">—</h2>
+            <p class="profile-headline" id="profile-role-line">—</p>
+            <p class="profile-location" id="profile-location-text">Barasat, Kolkata</p>
+          </div>
+        </div>
+
+        <!-- Details Card -->
+        <div class="panel profile-details-panel">
+          <div class="panel-head"><h4>Contact & Employee Info</h4></div>
+          
+          <div class="profile-grid" id="profile-view-grid"></div>
+
+          <form class="profile-grid edit-grid" id="profile-edit-grid" hidden>
+            <label class="field"><span>Full Name</span><input type="text" id="edit-name" placeholder="E.g. Bibhav Ranjan Das" required></label>
+            <label class="field"><span>Phone number</span><input type="tel" id="edit-phone" placeholder="Add a phone number"></label>
+            <label class="field"><span>Address</span><input type="text" id="edit-address" placeholder="Add your address"></label>
+            <label class="field"><span>Profile Picture</span><input type="file" id="edit-avatar-file" accept="image/*"></label>
+            
+            <div class="edit-actions">
+              <button type="button" class="btn-secondary" id="cancel-edit-btn">Cancel</button>
+              <button type="submit" class="btn-primary">Save changes</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ATTENDANCE -->
+      <section class="view" data-view="attendance">
+        <div class="panel">
+          <div class="panel-head">
+            <h4>Attendance — <span id="att-month-label"></span></h4>
+            <div class="segmented" id="att-view-toggle">
+              <button class="is-active" data-range="month">Month</button>
+              <button data-range="week">Week</button>
+            </div>
+          </div>
+          <div class="legend">
+            <span><i class="dot present"></i>Present</span>
+            <span><i class="dot half"></i>Half-day</span>
+            <span><i class="dot leave"></i>Leave</span>
+            <span><i class="dot absent"></i>Absent</span>
+            <span><i class="dot weekend"></i>Weekend</span>
+          </div>
+          <div class="cal-grid" id="cal-grid"></div>
+        </div>
+
+        <div class="panel admin-only" id="admin-attendance-panel">
+          <div class="panel-head"><h4>Team attendance today</h4></div>
+          <table class="data-table" id="admin-attendance-table"></table>
+        </div>
+      </section>
+
+      <!-- LEAVE -->
+      <section class="view" data-view="leave">
+        <div class="grid-2">
+          <form class="panel" id="leave-form">
+            <div class="panel-head"><h4>Apply for leave</h4></div>
+            <label class="field"><span>Leave type</span>
+              <select id="leave-type">
+                <option>Paid leave</option>
+                <option>Sick leave</option>
+                <option>Unpaid leave</option>
+              </select>
+            </label>
+            <div class="field-row">
+              <label class="field"><span>From</span><input type="date" id="leave-from" required></label>
+              <label class="field"><span>To</span><input type="date" id="leave-to" required></label>
+            </div>
+            <label class="field"><span>Remarks</span><textarea id="leave-remarks" rows="3" placeholder="Optional context for your manager"></textarea></label>
+            <button class="btn-primary" type="submit">Submit request</button>
+          </form>
+
+          <div class="panel">
+            <div class="panel-head"><h4>Your requests</h4></div>
+            <ul class="leave-list" id="leave-list-employee"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAYROLL -->
+      <section class="view" data-view="payroll">
+        <div class="panel payroll-panel">
+          <div class="panel-head"><h4>Salary structure — sample month</h4></div>
+          <table class="data-table" id="payroll-table-employee"></table>
+          <p class="field-hint">Payroll is read-only. Reach out to HR if something looks off. (Sample figures — will come from Firebase.)</p>
+        </div>
+
+        <div class="panel admin-only" id="admin-payroll-panel">
+          <div class="panel-head"><h4>Team payroll</h4></div>
+          <table class="data-table" id="admin-payroll-table"></table>
+        </div>
+      </section>
+
+      <!-- EMPLOYEES (admin) -->
+      <section class="view" data-view="employees">
+        <div class="panel">
+          <div class="panel-head"><h4>Employees</h4></div>
+          <table class="data-table" id="employees-table"></table>
+        </div>
+      </section>
+
+      <!-- APPROVALS (admin) -->
+      <section class="view" data-view="approvals">
+        <div class="panel">
+          <div class="panel-head"><h4>Leave approvals</h4></div>
+          <ul class="leave-list" id="leave-list-admin"></ul>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- dashboard.html -->
+<!-- dashboard.html (Bottom Scripts) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="notify.js"></script>
+    <script src="shared.js"></script>
+
+    <!-- Firebase and Dashboard Logic -->
+    <script type="module" src="firebase.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
