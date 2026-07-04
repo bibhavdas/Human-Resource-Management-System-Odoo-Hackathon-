@@ -101,7 +101,6 @@
       <!-- PROFILE -->
       <section class="view" data-view="profile">
         
-        <!-- LinkedIn Style Header Card -->
         <div class="panel profile-header-card" style="padding: 0; overflow: hidden;">
           <div class="profile-cover"></div>
           <div class="profile-header-main">
@@ -119,7 +118,6 @@
           </div>
         </div>
 
-        <!-- Details Card -->
         <div class="panel profile-details-panel">
           <div class="panel-head"><h4>Contact & Employee Info</h4></div>
           
@@ -130,6 +128,7 @@
             <label class="field"><span>Phone number</span><input type="tel" id="edit-phone" placeholder="Add a phone number"></label>
             <label class="field"><span>Address</span><input type="text" id="edit-address" placeholder="Add your address"></label>
             <label class="field"><span>Profile Picture</span><input type="file" id="edit-avatar-file" accept="image/*"></label>
+            <label class="field"><span>Cover Picture</span><input type="file" id="edit-cover-file" accept="image/*"></label>
             
             <div class="edit-actions">
               <button type="button" class="btn-secondary" id="cancel-edit-btn">Cancel</button>
@@ -228,15 +227,14 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- dashboard.html -->
-<!-- dashboard.html (Bottom Scripts) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
-    <script src="notify.js"></script>
-    <script src="shared.js"></script>
+<!-- Scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+<script src="notify.js"></script>
+<script src="shared.js"></script>
 
-    <!-- Firebase and Dashboard Logic -->
-    <script type="module" src="firebase.js"></script>
-    <script type="module" src="app.js"></script>
+<!-- Firebase and Dashboard Logic -->
+<script type="module" src="firebase.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
