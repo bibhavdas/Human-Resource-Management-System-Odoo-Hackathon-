@@ -40,7 +40,12 @@
         </label>
         <label class="field">
           <span>Password</span>
-          <input type="password" id="signin-password" placeholder="••••••••" required>
+          <div style="position:relative;">
+            <input type="password" id="signin-password" placeholder="••••••••" required style="width:100%; padding-right:38px;">
+            <button type="button" class="pwd-toggle" tabindex="-1" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:var(--muted); padding:0; display:flex; align-items:center;">
+              <svg viewBox="0 0 24 24" style="width:18px;height:18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
         </label>
         <p class="field-error" id="signin-error" hidden>Enter a valid email and password to continue.</p>
         <div class="role-toggle" data-role-toggle>
@@ -48,7 +53,6 @@
           <button type="button" class="role-opt" data-role="admin">HR / Admin</button>
         </div>
         <button type="submit" class="btn-primary" id="signin-submit">Sign in</button>
-        <p class="field-hint">This is a static prototype — any email/password combination signs you in. Firebase Authentication will replace this.</p>
       </form>
 
       <!-- Sign up -->
@@ -57,9 +61,9 @@
           <span>Full name</span>
           <input type="text" id="signup-name" placeholder="Sneha Roy" required>
         </label>
-        <label class="field">
+        <label class="field" style="display:none;">
           <span>Employee ID</span>
-          <input type="text" id="signup-empid" placeholder="EMP-0042" required>
+          <input type="text" id="signup-empid" placeholder="EMP-0042">
         </label>
         <label class="field">
           <span>Work email</span>
@@ -67,14 +71,18 @@
         </label>
         <label class="field">
           <span>Password</span>
-          <input type="password" id="signup-password" placeholder="8+ characters, 1 number" required minlength="8">
+          <div style="position:relative;">
+            <input type="password" id="signup-password" placeholder="8+ characters, 1 number" required minlength="8" style="width:100%; padding-right:38px;">
+            <button type="button" class="pwd-toggle" tabindex="-1" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:var(--muted); padding:0; display:flex; align-items:center;">
+              <svg viewBox="0 0 24 24" style="width:18px;height:18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
         </label>
         <div class="role-toggle" data-role-toggle-signup>
           <button type="button" class="role-opt is-active" data-role="employee">Employee</button>
           <button type="button" class="role-opt" data-role="admin">HR / Admin</button>
         </div>
         <button type="submit" class="btn-primary">Create account</button>
-        <p class="field-hint">In production this sends a verification email before the account goes live. For now, sign up just returns you to Sign in.</p>
       </form>
     </div>
   </div>
@@ -82,7 +90,7 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- index.html -->
+<!-- Scripts -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
 <script src="notify.js"></script>
@@ -92,4 +100,4 @@
 <script type="module" src="firebase.js"></script>
 <script type="module" src="auth.js"></script>
 </body>
-</html> 
+</html>
